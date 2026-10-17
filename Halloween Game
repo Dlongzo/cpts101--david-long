@@ -1,0 +1,218 @@
+#include <raylib.h>
+#include <vector>
+#include <string>
+#include <iostream>
+const int SCREEN_W = 2560;
+const int SCREEN_H = 1440;
+
+struct Ball
+{
+    Vector2 pos;
+    float radius;
+    float speed;
+    bool isTreat;   // true = candy (good), false = trick (bad)
+    Color color;
+};
+
+struct Bucket
+{
+    Rectangle rect;
+    float speed;
+};
+
+static void ResetGame(std::vector<Ball>& balls, Bucket& bucket, int& score, int& lives, float& spawnTimer, float& elapsed)
+{
+    balls.clear();
+    bucket.rect = { SCREEN_W / 2.0f - 70, SCREEN_H - 90, 140, 70 };
+    bucket.speed = 650.0f;
+    score = 0;
+    lives = 3;
+    spawnTimer = 0.0f;
+    elapsed = 0.0f;
+}
+
+static Ball SpawnBall(float elapsed)
+{
+    Ball b;
+    b.radius = (float)GetRandomValue(14, 24);
+    b.pos = { (float)GetRandomValue((int)b.radius, SCREEN_W - (int)b.radius), -b.radius };
+
+    // Gets faster the longer you survive
+    float difficulty = 1.0f + elapsed / 30.0f;
+    b.speed = (float)GetRandomValue(180, 320) * difficulty;
+
+    // About 1 in 4 balls is a "trick"
+    b.isTreat = GetRandomValue(1, 100) > 25;
+    if (b.isTreat)
+    {
+        Color candy[] = { ORANGE, PINK, YELLOW, SKYBLUE, LIME, VIOLET };
+        b.color = candy[GetRandomValue(0, 5)];
+    }
+    else
+    {
+        b.color = { 30, 30, 30, 255 };
+    }
+    return b;
+}
+
+static void DrawBall(const Ball& b)
+{
+    DrawCircleV(b.pos, b.radius, b.color);
+    if (b.isTreat)
+    {
+        // Wrapped-candy shine and stripe
+        DrawCircleV({ b.pos.x - b.radius * 0.35f, b.pos.y - b.radius * 0.35f }, b.radius * 0.25f, Fade(WHITE, 0.7f));
+        DrawCircleLines((int)b.pos.x, (int)b.pos.y, b.radius, Fade(BLACK, 0.4f));
+    }
+    else
+    {
+        // Spooky red eyes
+        DrawCircleV({ b.pos.x - b.radius * 0.35f, b.pos.y - b.radius * 0.1f }, b.radius * 0.2f, RED);
+        DrawCircleV({ b.pos.x + b.radius * 0.35f, b.pos.y - b.radius * 0.1f }, b.radius * 0.2f, RED);
+        DrawCircleLines((int)b.pos.x, (int)b.pos.y, b.radius, PURPLE);
+    }
+}
+
+static void DrawBucket(const Bucket& bk)
+{
+    Rectangle r = bk.rect;
+    // Handle
+    DrawRectangleLinesEx({ r.x + 20, r.y - 25, r.width - 40, 50 }, 4, DARKGRAY);
+    // Pumpkin pail body
+    DrawRectangleRounded(r, 0.4f, 8, ORANGE);
+    DrawRectangleRoundedLinesEx(r, 0.4f, 8, 3.0f, { 150, 70, 0, 255 });
+    // Jack-o-lantern face
+    DrawTriangle({ r.x + 35, r.y + 30 }, { r.x + 50, r.y + 30 }, { r.x + 42, r.y + 15 }, BLACK);
+    DrawTriangle({ r.x + r.width - 50, r.y + 30 }, { r.x + r.width - 35, r.y + 30 }, { r.x + r.width - 42, r.y + 15 }, BLACK);
+    DrawRectangle((int)(r.x + 40), (int)(r.y + 45), (int)(r.width - 80), 8, BLACK);
+}
+
+static void DrawBackground()
+{
+    Color nightBlue = { 20, 16, 48, 255 };
+    ClearBackground(nightBlue);
+
+    // Moon
+    DrawCircle(1080, 120, 70, { 250, 245, 200, 255 });
+    DrawCircle(1055, 100, 12, { 225, 220, 170, 255 });
+    DrawCircle(1100, 140, 8, { 225, 220, 170, 255 });
+
+    // Fixed "stars"
+    for (int i = 0; i < 40; i++)
+    {
+        int x = (i * 97) % SCREEN_W;
+        int y = (i * 53) % (SCREEN_H - 200);
+        DrawCircle(x, y, (i % 3 == 0) ? 2.0f : 1.0f, Fade(WHITE, 0.7f));
+    }
+
+    // Ground
+    DrawRectangle(0, SCREEN_H - 20, SCREEN_W, 20, { 10, 8, 20, 255 });
+}
+
+int main()
+{
+    InitWindow(SCREEN_W, SCREEN_H, "Trick Or Treat!");
+    SetTargetFPS(60);
+
+    std::vector<Ball> balls;
+    Bucket bucket;
+    int score, lives;
+    float spawnTimer, elapsed;
+    int highScore = 0;
+    bool gameOver = false;
+
+    ResetGame(balls, bucket, score, lives, spawnTimer, elapsed);
+
+    while (!WindowShouldClose())
+    {
+        float dt = GetFrameTime();
+
+        // ---------- UPDATE ----------
+        if (!gameOver)
+        {
+            elapsed += dt;
+
+            // Move bucket
+            if (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A)) bucket.rect.x -= bucket.speed * dt;
+            if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) bucket.rect.x += bucket.speed * dt;
+            if (bucket.rect.x < 0) bucket.rect.x = 0;
+            if (bucket.rect.x + bucket.rect.width > SCREEN_W) bucket.rect.x = SCREEN_W - bucket.rect.width;
+
+            // Spawn balls (faster over time, capped)
+            spawnTimer -= dt;
+            if (spawnTimer <= 0.0f)
+            {
+                balls.push_back(SpawnBall(elapsed));
+                float interval = 0.9f - elapsed * 0.008f;
+                spawnTimer = (interval < 0.3f) ? 0.3f : interval;
+            }
+
+            // Move balls and check catches
+            Rectangle catchZone = { bucket.rect.x, bucket.rect.y - 10, bucket.rect.width, 30 };
+            for (size_t i = 0; i < balls.size();)
+            {
+                balls[i].pos.y += balls[i].speed * dt;
+
+                bool remove = false;
+                if (CheckCollisionCircleRec(balls[i].pos, balls[i].radius, catchZone))
+                {
+                    if (balls[i].isTreat) score += 10;
+                    else lives--;
+                    remove = true;
+                }
+                else if (balls[i].pos.y - balls[i].radius > SCREEN_H)
+                {
+                    remove = true; // fell off screen
+                }
+
+                if (remove) balls.erase(balls.begin() + i);
+                else i++;
+            }
+
+            if (lives <= 0)
+            {
+                gameOver = true;
+                if (score > highScore) highScore = score;
+            }
+        }
+        else if (IsKeyPressed(KEY_R))
+        {
+            ResetGame(balls, bucket, score, lives, spawnTimer, elapsed);
+            gameOver = false;
+        }
+
+        // ---------- DRAW ----------
+        BeginDrawing();
+        DrawBackground();
+
+        for (const Ball& b : balls) DrawBall(b);
+        DrawBucket(bucket);
+
+        // HUD
+        DrawText(TextFormat("Candy: %d", score), 20, 20, 32, ORANGE);
+        DrawText(TextFormat("Best: %d", highScore), 20, 60, 24, LIGHTGRAY);
+        for (int i = 0; i < lives; i++)
+            DrawText("<3", 20 + i * 45, 95, 32, RED);
+
+        if (gameOver)
+        {
+            DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Fade(BLACK, 0.6f));
+            const char* title = "YOU! ARE OUT!";
+            DrawText(title, (SCREEN_W - MeasureText(title, 64)) / 2, 260, 64, ORANGE);
+            const char* sub = TextFormat("You collected %d candy", score);
+            DrawText(sub, (SCREEN_W - MeasureText(sub, 32)) / 2, 340, 32, WHITE);
+            const char* again = "Press R to trick-or-treat again";
+            DrawText(again, (SCREEN_W - MeasureText(again, 24)) / 2, 400, 24, LIGHTGRAY);
+        }
+        else if (elapsed < 5.0f)
+        {
+            const char* help = "A/D or Arrow Keys to move. Catch the candy, dodge the spooky black balls!";
+            DrawText(help, (SCREEN_W - MeasureText(help, 24)) / 2, 330, 24, Fade(WHITE, 0.8f));
+        }
+
+        EndDrawing();
+    }
+
+    CloseWindow();
+    return 0;
+}
